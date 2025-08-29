@@ -1,0 +1,51 @@
+set $namespace="%SYS"
+Do ##class(Security.Users).UnExpireUserPasswords("*")
+Do ##class(Config.NLS.Locales).Install("jpuw")
+
+// Embedded Python用にCallInサービスを有効化（現在の設定を取得）
+set st=##class(Security.Services).Get("%Service_CallIn",.pro)
+set pro("Enabled")=1
+// 修正登録
+set st=##class(Security.Services).Modify("%Service_CallIn",.pro)
+
+//SSLクライアント webapi作成
+set status=##class(Security.SSLConfigs).Create("webapi")
+
+// WSGIアプリの設定
+set webName = "/fish"
+set webProperties("DispatchClass") = "%SYS.Python.WSGI"
+set webProperties("NameSpace") = "USER"
+set webProperties("Enabled") = 1
+set webProperties("AutheEnabled") = 64
+set webProperties("MatchRoles")=":%All"
+set webProperties("Path")="/src/wsgi/"
+set webProperties("WSGIAppLocation")="/src/wsgi/"
+set webProperties("WSGIAppName")="fishapp"
+set webProperties("WSGICallable")="app"
+set webProperties("WSGIDebug")=1
+set webProperties("WSGIType")=1
+set st=##class(Security.Applications).Create(webName, .webProperties)
+
+// IRIS RESTアプリの設定
+set webName = "/fish2"
+set webProperties("DispatchClass") = "FishDetector.REST"
+set webProperties("NameSpace") = "USER"
+set webProperties("Enabled") = 1
+set webProperties("AutheEnabled") = 64
+set webProperties("MatchRoles")=":%All"
+set st=##class(Security.Applications).Create(webName, .webProperties)
+
+set $namespace="USER"
+
+// 魚ディテクター用準備
+do $System.OBJ.LoadDir("/opt/src/FishDetector","ck",,1)
+// FishDetector.Fish SQL実行
+do ##class(FishDetector.InstallUtils).loadsql("/opt/src/sql/fish.sql")
+//ベクトル検索用データロード
+do ##class(FishDetector.InstallUtils).loaddata("/opt/src/fish_clip_vectors.jsonl")
+
+// 釣り場・釣り果 SQL実行
+do ##class(FishDetector.InstallUtils).loadsql("/opt/src/sql/fishinfo.sql")
+
+// EMBEDDINGサンプル用
+do ##class(FishDetector.InstallUtils).loadsql("/opt/src/sql/tenki.sql")

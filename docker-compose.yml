@@ -1,0 +1,24 @@
+
+services:  
+  iris:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports: ["9872:1972"]
+    container_name: irisragasobo
+    volumes: ["./src:/src"]
+    environment: 
+      - TZ=JST-9
+
+  webgateway:
+    image: containers.intersystems.com/intersystems/webgateway:2025.1
+    container_name: wgragasobo
+    init: true
+    ports:
+      - 9990:80
+      - 9993:443
+    environment:
+    - ISC_CSP_CONF_FILE=/webgateway-shared/CSP.conf
+    - ISC_CSP_INI_FILE=/webgateway-shared/CSP.ini
+    volumes:
+    - ./webgateway:/webgateway-shared

@@ -1,0 +1,12 @@
+sentence-transformers
+httpx
+torch
+Image
+transformers==4.49.0
+sentencepiece
+git+https://github.com/openai/CLIP.git
+pillow
+requests
+timm
+Flask
+sqlalchemy-iris
