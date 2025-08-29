@@ -146,7 +146,7 @@ def getrecipe2():
 #  "FishCount": 釣れた魚の数
 #  }
 #------------------------------------------
-@app.route('/choka',methods=['POST','GET'])
+@app.route('/choka',methods=['POST'])
 def choka():
     body = request.get_json()
     spotid='kb-001'

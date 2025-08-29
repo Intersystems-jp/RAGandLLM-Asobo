@@ -158,12 +158,14 @@ uploadで返送されるJSON＋ユーザの好みをJSONに指定して実行
 uploadで返送されるJSON＋魚の体長、サイズ
 
 送信するBody
+```
 {
   "FishID": "f010",
   "FishName": "タチウオ",
-  "FishSize": "50",
+  "Size": "50",
   "FishCount": 1
 }
+```
 - wsgi 版 URL
 
     https://localhost:9993/fish/choka
