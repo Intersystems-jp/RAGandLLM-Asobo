@@ -5,21 +5,23 @@ import os
 #import sys
 #sys.path += ["/usr/irissys/mgr/python","/usr/irissys/lib/python"]
 import iris
-import time,datetime
+import datetime
 import config
 
 #UPLOAD用フォルダ
 UPLOAD_FOLDER = "/src/images/"
 
-#生成AIのURL
+#オープンソースLLMのURL（仮）
 API_SERVER_URL = "http://176.34.0.93/api/chat"
 
 app = Flask(__name__)
+
 
 @app.route('/', methods=['GET'])
 def meetup():
     name = "Hello FishDetector!"
     return name
+
 
 # ------------------------------------------
 # /upload エンドポイント
@@ -39,45 +41,25 @@ def upload():
     rs=stmt.execute(filefullpath)
     fishinfo=next(rs)
     fishname=fishinfo[1]
-    fishid=fishinfo[0]
-
-    #釣り場情報を入手（釣り場情報今は固定）
-    sql2="""
-    SELECT SpotName||'の状況は、'||TideState||'、'|| TideCycle||'、潮位は'||TideHeightCmRelative||'cm' as result
-      ,SpotID,CAST(DatetimeJst AS TIMESTAMP) FROM FishDetector.BayInfo WHERE SpotID='tb-001' AND DatetimeJst BETWEEN DATEADD(hour,-1,?) AND ?
-    """
-    now = str(datetime.datetime.now())
-    stmt=iris.sql.prepare(sql2)
-    stmt.Statement._SelectMode=1 #odbcモードの指定
-    rs=stmt.execute(now,now)
-    bayinfo=next(rs)
-    spotinfo=bayinfo[2] + "　釣り場：" + bayinfo[0]
-
-    #釣り果情報入手
-    sql3="SELECT '最大数:'||MAX(FishCount)||'、最小数:'||MIN(FishCount)||'、最大長cm:'||MAX(Size)||'、最小長cm:'||MIN(Size) as result"\
-     " FROM FishDetector.FishingInfo WHERE FishID=? AND SpotID='kb-001' AND (ReportDate >= DATEADD(yyyy,-2,?) AND (DATEPART(mm,ReportDate) BETWEEN DATEPART(mm,?)-1 AND DATEPART(mm,?)+1))"
-    stmt=iris.sql.prepare(sql3)
-    stmt.Statement._SelectMode=1 #odbcモードの指定
-    rs=stmt.execute(fishid,now,now,now)
-    fishinginfo=next(rs)
-
     #回答のJSONを作成
-    ans= jsonify({"FishName":fishname,"FishInfo":spotinfo+"　本日の前後1か月の過去2年間の釣果情報は、"+fishinginfo[0],"FishID":fishid})
-
+    ans= jsonify({"FishName":fishname})
     return ans
 
 # ------------------------------------------
-# /recipe エンドポイント
+# /recipe　ローカル LLMにレシピ生成を依頼
 # Bodyの中身
 #  {
 #  "UserInput":"ここにユーザが希望するレシピの内容",
-#  "FishName":"魚名",
-#  "FishInfo":"魚の画像ファイルから得られた補足情報"
-# }
+#  "FishName":"魚名"
+#  }
+#
+# 魚名をキーに生成AIに渡す独自データをデータベースから入手
+# 独自データ＝その釣り場の潮位情報と釣果データ（デモでは釣り場は固定値を置いています）
 # ------------------------------------------
 @app.route('/recipe',methods=['POST'])
 def getrecipe():
     body = request.get_json()
+    fishinfo=get_fishinfo(body["FishName"])
     headers = {"Content-Type": "application/json;charset=utf-8"}
     data = {
         "model": "pakachan/elyza-llama3-8b",
@@ -88,7 +70,7 @@ def getrecipe():
             },
             {
                 "role": "system",
-                "content": f"魚名は{body["FishName"]}です{body["FishInfo"]}",
+                "content": f"魚名は{body["FishName"]}です。{fishinfo}",
             },
             {
                 "role": "user",
@@ -100,20 +82,36 @@ def getrecipe():
     response = requests.post(API_SERVER_URL, headers=headers, json=data)
 
     result = response.json()
-    answer=json.dumps({"Message":result["message"]["content"]},ensure_ascii=False)
+    answer=json.dumps({"Message":result["message"]["content"],"FishInfo":fishinfo},ensure_ascii=False)
+
     return answer
+    #for line in response.iter_lines():
+    #    decoded_line = json.loads(line.decode('utf-8'))
+    #    answer_text+=decoded_line['message']['content']
 
-
+# ------------------------------------------
+# /recipe2 OpenAIにレシピ生成を依頼する
+# Bodyの中身
+#  {
+#  "UserInput":"ここにユーザが希望するレシピの内容",
+#  "FishName":"魚名"
+# }
+#
+# 魚名をキーに生成AIに渡す独自データをデータベースから入手
+# 独自データ＝その釣り場の潮位情報と釣果データ（デモでは釣り場は固定値を置いています）
+# ------------------------------------------
 @app.route('/recipe2',methods=['POST'])
 def getrecipe2():
     body = request.get_json()
+    fishinfo=get_fishinfo(body["FishName"])
+
     API_SERVER_URL="https://api.openai.com/v1/chat/completions"
     headers={
         "Content-Type":"application/json;charset=utf-8",
         "Authorization": f"Bearer {config.key}",
     }
     data = {
-        "model": "gpt-4o",
+        "model": "gpt-4",
         "messages": [
             {
                 "role": "system",
@@ -121,7 +119,7 @@ def getrecipe2():
             },
             {
                 "role": "system",
-                "content": f"魚名は{body["FishName"]}です{body["FishInfo"]}",
+                "content": f"魚名は{body["FishName"]}です。{fishinfo}",
             },
             {
                 "role": "user",
@@ -132,15 +130,57 @@ def getrecipe2():
 
     response = requests.post(API_SERVER_URL, headers=headers, json=data)
     result = response.json()
-    answer=json.dumps({"Message":result["choices"][0]["message"]["content"]},ensure_ascii=False)
+    answer=json.dumps({"Message":result["choices"][0]["message"]["content"],"FishInfo":fishinfo},ensure_ascii=False)
     return answer
+
+
+#------------------------------------------
+# 魚名から特定の釣り場の情報（潮位情報）と過去の釣果データを入手
+# 引数：魚名
+# 戻り値：特定された釣り場の情報（潮位情報）と過去の釣果データの文字列
+# デモでは釣り場は木更津沖堤防：SpotID='tb-001' の固定データとしています
+#------------------------------------------
+def get_fishinfo(fishname):
+    if not fishname:
+        return "魚名が未指定です。"
+    
+    #魚名から魚のID入手
+    sql1="SELECT FishID from FishDetector.Fish WHERE FishName=?"
+    stmt=iris.sql.prepare(sql1)
+    rs=stmt.execute(fishname)
+    row = next(rs, None)
+    if not row:
+        return f"{fishname} の情報が見つかりません。"
+    fishid = row[0]
+ 
+    #釣り場情報を入手（釣り場情報今は固定）
+    sql2="SELECT SpotName||'の状況は、'||TideState||'、'|| TideCycle||'、潮位は'||TideHeightCmRelative||'cm' as result ,SpotID,CAST(DatetimeJst AS TIMESTAMP)"\
+     " FROM FishDetector.BayInfo WHERE SpotID='tb-001' AND DatetimeJst BETWEEN DATEADD(hour,-1,?) AND ?"
+    now = str(datetime.datetime.now())
+    stmt=iris.sql.prepare(sql2)
+    rs=stmt.execute(now,now)
+    bayinfo=next(rs)
+    spotinfo=bayinfo[2] + "　釣り場：" + bayinfo[0]
+
+    #釣果情報入手
+    sql3="SELECT '最大数:'||MAX(FishCount)||'、最小数:'||MIN(FishCount)||'、最大長cm:'||MAX(Size)||'、最小長cm:'||MIN(Size) as result"\
+     " FROM FishDetector.FishingInfo WHERE FishID=? AND SpotID='tb-001' AND (ReportDate >= DATEADD(yyyy,-2,?) AND (DATEPART(mm,ReportDate) BETWEEN DATEPART(mm,?)-1 AND DATEPART(mm,?)+1))"
+    stmt=iris.sql.prepare(sql3)
+    rs=stmt.execute(fishid,now,now,now)
+    fishinginfo=next(rs)
+    g=iris.gref("^iijima")
+    g["fishinginfo"]=fishinginfo[0]
+
+    #文字列を戻す
+    return f"{spotinfo}　本日の前後1か月の過去2年間の釣果情報は、{fishinginfo[0]}"
+
+
 
 #------------------------------------------
 # /choka エンドポイント
-# ここではSpotIDはkb-001とする（木更津沖防波堤）
+# ここではSpotIDはtb-001とする（木更津沖防波堤）
 # Bodyの中身
 #  {
-#  "FishID":fishid,
 #  "FishName":"魚名",
 #  "Size":魚のサイズ,
 #  "FishCount": 釣れた魚の数
@@ -149,12 +189,23 @@ def getrecipe2():
 @app.route('/choka',methods=['POST'])
 def choka():
     body = request.get_json()
-    spotid='kb-001'
+    if not body["FishName"]:
+        return "魚名が未指定です。"
+    #魚名から魚のID入手
+    sql1="SELECT FishID from FishDetector.Fish WHERE FishName=?"
+    stmt=iris.sql.prepare(sql1)
+    rs=stmt.execute(body["FishName"])
+    row = next(rs, None)
+    if not row:
+        return f"{body["FishName"]} の情報が見つかりません。"
+    fishid = row[0]
+
+    spotid='tb-004'
     repordate=datetime.datetime.now()
     sql="insert into FishDetector.FishingInfo (SpotID,FishID,ReportDate,Size,FishCount) VALUES(?,?,?,?,?)"
     stmt=iris.sql.prepare(sql)
     stmt.Statement._SelectMode=1 #odbcモードの指定
-    rset=stmt.execute(spotid,body["FishID"],str(repordate.date()),body["Size"],body["FishCount"])
+    rset=stmt.execute(spotid,fishid,str(repordate.date()),body["Size"],body["FishCount"])
     if (rset.ResultSet._SQLCODE<0) :
         result={"Message":f"エラー：{rset.ResultSet._SQLCODE}, {rset.ResultSet._Message}"}
     else:

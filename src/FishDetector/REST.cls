@@ -49,39 +49,12 @@ ClassMethod upload() As %Status
     //　JSON作成
     set json={}
     set json.FishName=rset.%Get("FishName")
-    set fishid=rset.%Get("FishID")
-
-    // 釣り場の情報を取得（木更津沖堤防固定情報：SpotID='tb-001'）
-    set sql2="SELECT SpotName||'の状況は、'||TideState||'、'|| TideCycle||'、潮位は'||TideHeightCmRelative||'cm' as result ,SpotID,DatetimeJst"
-    set sql2=sql2_" FROM FishDetector.BayInfo WHERE SpotID='tb-001' AND DatetimeJst BETWEEN DATEADD(hour,-1,?) AND ?"
-    // 現在のローカルタイムスタンプ
-    set ts=##class(%UTC).NowLocal()
-    set stmt.%SelectMode=1  //ODBCモード
-    set status=stmt.%Prepare(sql2)
-    set rset=stmt.%Execute(ts,ts)
-    do rset.%Next()
-    set spotinfo=rset.DatetimeJst_" 釣り場："_rset.%Get("result")
-
-    // 過去の釣り情報（木更津沖堤防固定情報：SpotID='kb-001'）
-    // 過去2年、指定日付の月前後1か月の釣り情報
-    set sql3="SELECT '最大数:'||MAX(FishCount)||'、最小数:'||MIN(FishCount)||'、最大長cm:'||MAX(Size)||'、最小長cm:'||MIN(Size) as result"
-    set sql3=sql3_" FROM FishDetector.FishingInfo WHERE FishID=? AND SpotID='kb-001' AND (ReportDate >= DATEADD(yyyy,-2,?) AND (DATEPART(mm,ReportDate) BETWEEN DATEPART(mm,?)-1 AND DATEPART(mm,?)+1))"
-    set status=stmt.%Prepare(sql3)
-    set now=$ZDATE($Horolog,3)
-    set rset=stmt.%Execute(fishid,now,now,now)
-    do rset.%Next()
-    set fishinginfo=rset.%Get("result")
-    set json.FishInfo=$Get(spotinfo)
-    set ^iijimaz=fishinginfo
-    if $GET(fishinginfo)'="" {
-        set json.FishInfo=$Get(spotinfo)_"　本日の前後1か月の過去2年間の釣果情報は、"_$Get(fishinginfo)
-    }
     do json.%ToJSON()
     return $$$OK
 }
 
 /// 釣果登録
-/// SpotIDは固定：kb-001
+/// SpotIDは固定：tb-001
 /// Body
 /// {
 ///  "FishID":"f001",
@@ -93,11 +66,19 @@ ClassMethod choka() As %Status
 {
     #dim %request As %CSP.Request
     set body={}.%FromJSON(%request.Content)
+    //魚名からFishID入手
+    set sql="SELECT FishID From FishDetector.Fish WHERE FishName=?"
+    set stmt=##class(%SQL.Statement).%New()
+    $$$ThrowOnError(stmt.%Prepare(sql))
+    set rset=stmt.%Execute(body.FishName)
+    do rset.%Next()
+    set fishid=rset.FishID
+
     set sql="insert into FishDetector.FishingInfo (SpotID,FishID,ReportDate,Size,FishCount) VALUES(?,?,?,?,?)"
     set stmt=##class(%SQL.Statement).%New()
     set status=stmt.%Prepare(sql)
     set stmt.%SelectMode=1
-    set rset=stmt.%Execute("kb-001",body.FishID,$ZDATE($H,3),body.Size,body.FishCount)
+    set rset=stmt.%Execute("tb-001",fishid,$ZDATE($H,3),body.Size,body.FishCount)
     set j={}
     set j.Message=body.FishName_"の釣果登録完了"
     do j.%ToJSON()
@@ -107,15 +88,18 @@ ClassMethod choka() As %Status
 /// Ollama用
 /// POSTのボディ
 /// {
-///  "UserInput":"ここにユーザが希望するレシピの内容",
 ///  "FishName":"魚名",
-///  "FishInfo":"魚の画像ファイルから得られた補足情報"
+///  "UserInput":"希望のレシピの内容"
 /// }
+/// 魚名からFishIDを入手し、その魚の過去2年間の釣果情報と釣り場の潮位情報を入手し生成AIに渡す
 ClassMethod recipe() As %Status
 {
     #dim %request As %CSP.Request
     set body={}.%FromJSON(%request.Content)
-    set status=##class(FishDetector.REST).AskLLM(1,.body,.ans)
+    // ユーザ入力の魚名から生成AIに渡す補足情報を入手する
+    // bodyのJSONに "FishInfo" が追加される
+    set status=..GetFishInfo(.body)
+    set status=..AskLLM(1,.body,.ans)
     do ans.%ToJSON()
     return $$$OK
 }
@@ -123,17 +107,64 @@ ClassMethod recipe() As %Status
 /// OpenAI用
 /// POSTのボディ
 /// {
-///  "UserInput":"ここにユーザが希望するレシピの内容",
 ///  "FishName":"魚名",
-///  "FishInfo":"魚の画像ファイルから得られた補足情報"
+///  "UserInput":"希望のレシピの内容"
 /// }
+/// 魚名からFishIDを入手し、その魚の過去2年間の釣果情報と釣り場の潮位情報を入手し生成AIに渡す
 ClassMethod recipe2() As %Status
 {
     #dim %request As %CSP.Request
     set body={}.%FromJSON(%request.Content)
-    set status=##class(FishDetector.REST).AskLLM(0,.body,.ans)
+    // ユーザ入力の魚名から生成AIに渡す補足情報を入手する
+    // bodyのJSONに "FishInfo" が追加される
+    set status=..GetFishInfo(.body)
+    set status=..AskLLM(0,.body,.ans)
     do ans.%ToJSON()
     return $$$OK
+}
+
+ClassMethod GetFishInfo(ByRef body As %DynamicArray) As %Status
+{
+    #dim ex As %Exception.AbstractException
+    set status=$$$OK
+    try {
+        //魚名からFishID入手
+        set sql="SELECT FishID From FishDetector.Fish WHERE FishName=?"
+        set stmt=##class(%SQL.Statement).%New()
+        $$$ThrowOnError(stmt.%Prepare(sql))
+        set rset=stmt.%Execute(body.FishName)
+        do rset.%Next()
+        set fishid=rset.FishID
+
+        // 釣り場の情報を取得（木更津沖堤防固定情報：SpotID='tb-001'）
+        set sql2="SELECT SpotName||'の状況は、'||TideState||'、'|| TideCycle||'、潮位は'||TideHeightCmRelative||'cm' as result ,SpotID,DatetimeJst"
+        set sql2=sql2_" FROM FishDetector.BayInfo WHERE SpotID='tb-001' AND DatetimeJst BETWEEN DATEADD(hour,-1,?) AND ?"
+        // 現在のローカルタイムスタンプ
+        set ts=##class(%UTC).NowLocal()
+        set stmt.%SelectMode=1  //ODBCモード
+        $$$ThrowOnError(stmt.%Prepare(sql2))
+        set rset=stmt.%Execute(ts,ts)
+        do rset.%Next()
+        set spotinfo=rset.DatetimeJst_" 釣り場："_rset.%Get("result")
+
+        // 過去の釣り情報（木更津沖堤防固定情報：SpotID='tb-001'）
+        // 過去2年、指定日付の月前後1か月の釣り情報
+        set sql3="SELECT '最大数:'||MAX(FishCount)||'、最小数:'||MIN(FishCount)||'、最大長cm:'||MAX(Size)||'、最小長cm:'||MIN(Size) as result"
+        set sql3=sql3_" FROM FishDetector.FishingInfo WHERE FishID=? AND SpotID='tb-001' AND (ReportDate >= DATEADD(yyyy,-2,?) AND (DATEPART(mm,ReportDate) BETWEEN DATEPART(mm,?)-1 AND DATEPART(mm,?)+1))"
+        $$$ThrowOnError(stmt.%Prepare(sql3))
+        set now=$ZDATE($Horolog,3)
+        set rset=stmt.%Execute(fishid,now,now,now)
+        do rset.%Next()
+        set fishinginfo=rset.%Get("result")
+        set body.FishInfo=$Get(spotinfo)
+        if $GET(fishinginfo)'="" {
+            set body.FishInfo=$Get(spotinfo)_"　本日の前後1か月の過去2年間の釣果情報は、"_$Get(fishinginfo)
+        }
+    }
+    catch ex {
+        set status=ex.AsStatus()
+    }
+    return status
 }
 
 ClassMethod hello() As %Status
@@ -216,6 +247,7 @@ ClassMethod AskLLM(flg As %Boolean = 1, body As %DynamicAbstractObject, ByRef an
         if flg'=1 {
             set ans.Message=resjson.choices."0".message.content   
         }
+        set ans.FishInfo=body.FishInfo
     }
     catch ex {
         set status=ex.AsStatus()
