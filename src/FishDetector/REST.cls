@@ -48,6 +48,7 @@ ClassMethod upload() As %Status
 
     //　JSON作成
     set json={}
+    set json.FishID=rset.%Get("FishID")
     set json.FishName=rset.%Get("FishName")
     do json.%ToJSON()
     return $$$OK
@@ -66,19 +67,11 @@ ClassMethod choka() As %Status
 {
     #dim %request As %CSP.Request
     set body={}.%FromJSON(%request.Content)
-    //魚名からFishID入手
-    set sql="SELECT FishID From FishDetector.Fish WHERE FishName=?"
-    set stmt=##class(%SQL.Statement).%New()
-    $$$ThrowOnError(stmt.%Prepare(sql))
-    set rset=stmt.%Execute(body.FishName)
-    do rset.%Next()
-    set fishid=rset.FishID
-
     set sql="insert into FishDetector.FishingInfo (SpotID,FishID,ReportDate,Size,FishCount) VALUES(?,?,?,?,?)"
     set stmt=##class(%SQL.Statement).%New()
     set status=stmt.%Prepare(sql)
     set stmt.%SelectMode=1
-    set rset=stmt.%Execute("tb-001",fishid,$ZDATE($H,3),body.Size,body.FishCount)
+    set rset=stmt.%Execute("tb-001",body.FishID,$ZDATE($H,3),body.Size,body.FishCount)
     set j={}
     set j.Message=body.FishName_"の釣果登録完了"
     do j.%ToJSON()
@@ -88,6 +81,7 @@ ClassMethod choka() As %Status
 /// Ollama用
 /// POSTのボディ
 /// {
+///  "FishID":"f001",
 ///  "FishName":"魚名",
 ///  "UserInput":"希望のレシピの内容"
 /// }
@@ -107,6 +101,7 @@ ClassMethod recipe() As %Status
 /// OpenAI用
 /// POSTのボディ
 /// {
+///  "FishID":"f001",
 ///  "FishName":"魚名",
 ///  "UserInput":"希望のレシピの内容"
 /// }
@@ -128,13 +123,8 @@ ClassMethod GetFishInfo(ByRef body As %DynamicArray) As %Status
     #dim ex As %Exception.AbstractException
     set status=$$$OK
     try {
-        //魚名からFishID入手
-        set sql="SELECT FishID From FishDetector.Fish WHERE FishName=?"
         set stmt=##class(%SQL.Statement).%New()
-        $$$ThrowOnError(stmt.%Prepare(sql))
-        set rset=stmt.%Execute(body.FishName)
-        do rset.%Next()
-        set fishid=rset.FishID
+        set fishid=body.FishID
 
         // 釣り場の情報を取得（木更津沖堤防固定情報：SpotID='tb-001'）
         set sql2="SELECT SpotName||'の状況は、'||TideState||'、'|| TideCycle||'、潮位は'||TideHeightCmRelative||'cm' as result ,SpotID,DatetimeJst"

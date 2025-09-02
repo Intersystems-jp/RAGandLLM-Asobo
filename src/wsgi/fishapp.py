@@ -40,9 +40,9 @@ def upload():
     #rs=stmt.execute(embedding)
     rs=stmt.execute(filefullpath)
     fishinfo=next(rs)
-    fishname=fishinfo[1]
+
     #回答のJSONを作成
-    ans= jsonify({"FishName":fishname})
+    ans= jsonify({"FishID":fishinfo[0],"FishName":fishinfo[1]})
     return ans
 
 # ------------------------------------------
@@ -51,6 +51,7 @@ def upload():
 #  {
 #  "UserInput":"ここにユーザが希望するレシピの内容",
 #  "FishName":"魚名"
+#  "FishID":"f001"
 #  }
 #
 # 魚名をキーに生成AIに渡す独自データをデータベースから入手
@@ -59,7 +60,7 @@ def upload():
 @app.route('/recipe',methods=['POST'])
 def getrecipe():
     body = request.get_json()
-    fishinfo=get_fishinfo(body["FishName"])
+    fishinfo=get_fishinfo(body["FishID"])
     headers = {"Content-Type": "application/json;charset=utf-8"}
     data = {
         "model": "pakachan/elyza-llama3-8b",
@@ -95,6 +96,7 @@ def getrecipe():
 #  {
 #  "UserInput":"ここにユーザが希望するレシピの内容",
 #  "FishName":"魚名"
+#  "FishID":"f001"
 # }
 #
 # 魚名をキーに生成AIに渡す独自データをデータベースから入手
@@ -103,7 +105,7 @@ def getrecipe():
 @app.route('/recipe2',methods=['POST'])
 def getrecipe2():
     body = request.get_json()
-    fishinfo=get_fishinfo(body["FishName"])
+    fishinfo=get_fishinfo(body["FishID"])
 
     API_SERVER_URL="https://api.openai.com/v1/chat/completions"
     headers={
@@ -140,19 +142,7 @@ def getrecipe2():
 # 戻り値：特定された釣り場の情報（潮位情報）と過去の釣果データの文字列
 # デモでは釣り場は木更津沖堤防：SpotID='tb-001' の固定データとしています
 #------------------------------------------
-def get_fishinfo(fishname):
-    if not fishname:
-        return "魚名が未指定です。"
-    
-    #魚名から魚のID入手
-    sql1="SELECT FishID from FishDetector.Fish WHERE FishName=?"
-    stmt=iris.sql.prepare(sql1)
-    rs=stmt.execute(fishname)
-    row = next(rs, None)
-    if not row:
-        return f"{fishname} の情報が見つかりません。"
-    fishid = row[0]
- 
+def get_fishinfo(fishid): 
     #釣り場情報を入手（釣り場情報今は固定）
     sql2="SELECT SpotName||'の状況は、'||TideState||'、'|| TideCycle||'、潮位は'||TideHeightCmRelative||'cm' as result ,SpotID,CAST(DatetimeJst AS TIMESTAMP)"\
      " FROM FishDetector.BayInfo WHERE SpotID='tb-001' AND DatetimeJst BETWEEN DATEADD(hour,-1,?) AND ?"
@@ -168,9 +158,7 @@ def get_fishinfo(fishname):
     stmt=iris.sql.prepare(sql3)
     rs=stmt.execute(fishid,now,now,now)
     fishinginfo=next(rs)
-    g=iris.gref("^iijima")
-    g["fishinginfo"]=fishinginfo[0]
-
+    
     #文字列を戻す
     return f"{spotinfo}　本日の前後1か月の過去2年間の釣果情報は、{fishinginfo[0]}"
 
@@ -181,6 +169,7 @@ def get_fishinfo(fishname):
 # ここではSpotIDはtb-001とする（木更津沖防波堤）
 # Bodyの中身
 #  {
+#  "FishID":"f001" 
 #  "FishName":"魚名",
 #  "Size":魚のサイズ,
 #  "FishCount": 釣れた魚の数
@@ -189,17 +178,7 @@ def get_fishinfo(fishname):
 @app.route('/choka',methods=['POST'])
 def choka():
     body = request.get_json()
-    if not body["FishName"]:
-        return "魚名が未指定です。"
-    #魚名から魚のID入手
-    sql1="SELECT FishID from FishDetector.Fish WHERE FishName=?"
-    stmt=iris.sql.prepare(sql1)
-    rs=stmt.execute(body["FishName"])
-    row = next(rs, None)
-    if not row:
-        return f"{body["FishName"]} の情報が見つかりません。"
-    fishid = row[0]
-
+    fishid = body["FishID"]
     spotid='tb-004'
     repordate=datetime.datetime.now()
     sql="insert into FishDetector.FishingInfo (SpotID,FishID,ReportDate,Size,FishCount) VALUES(?,?,?,?,?)"
