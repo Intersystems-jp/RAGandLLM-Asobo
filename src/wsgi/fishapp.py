@@ -113,7 +113,7 @@ def getrecipe2():
         "Authorization": f"Bearer {config.key}",
     }
     data = {
-        "model": "gpt-4",
+        "model": "gpt-4o",
         "messages": [
             {
                 "role": "system",
