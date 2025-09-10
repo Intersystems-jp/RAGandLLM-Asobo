@@ -15,7 +15,7 @@ go
 CREATE INDEX DatetimeJstIndex On TABLE FishDetector.BayInfo (DatetimeJst)
 go
 
-LOAD DATA FROM FILE '/opt/src/tides_2025-08-01_to_2025-09-09_hourly-2.csv'
+LOAD DATA FROM FILE '/opt/src/tides_2025-08-01_to_2026-09-09_hourly-2.csv'
  INTO FishDetector.BayInfo
  USING {"from":{"file":{"charset":"UTF-8","header":true}}}
 go
