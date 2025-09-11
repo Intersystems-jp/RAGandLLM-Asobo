@@ -145,22 +145,36 @@ def getrecipe2():
 def get_fishinfo(fishid): 
     #釣り場情報を入手（釣り場情報今は固定）
     sql2="SELECT SpotName||'の状況は、'||TideState||'、'|| TideCycle||'、潮位は'||TideHeightCmRelative||'cm' as result ,SpotID,CAST(DatetimeJst AS TIMESTAMP)"\
-     " FROM FishDetector.BayInfo WHERE SpotID='tb-001' AND DatetimeJst BETWEEN DATEADD(hour,-1,?) AND ?"
+     " FROM FishDetector.BayInfo WHERE SpotID='tb-001' AND (DatetimeJst BETWEEN DATEADD(hour,-1,?) AND ?)"
     now = str(datetime.datetime.now())
     stmt=iris.sql.prepare(sql2)
+    stmt.Statement._SelectMode=1  #odbcモードの指定
     rs=stmt.execute(now,now)
-    bayinfo=next(rs)
-    spotinfo=bayinfo[2] + "　釣り場：" + bayinfo[0]
+    bayinfo=next(rs,None)
+    if bayinfo is None:
+        #サンプルデータが2026/9/9までしか登録がないのでそれ以降はダミーを設定して返す
+        spotinfo="★サンプルデータ範囲外のためダミーデータを返送★ 釣り場：木更津沖堤防 下げ潮、若潮、潮位は28.5cm"
+    
+    else :
+        spotinfo=bayinfo[2] + "　釣り場：" + bayinfo[0]
 
     #釣果情報入手
     sql3="SELECT '最大数:'||MAX(FishCount)||'、最小数:'||MIN(FishCount)||'、最大長cm:'||MAX(Size)||'、最小長cm:'||MIN(Size) as result"\
      " FROM FishDetector.FishingInfo WHERE FishID=? AND SpotID='tb-001' AND (ReportDate >= DATEADD(yyyy,-2,?) AND (DATEPART(mm,ReportDate) BETWEEN DATEPART(mm,?)-1 AND DATEPART(mm,?)+1))"
     stmt=iris.sql.prepare(sql3)
     rs=stmt.execute(fishid,now,now,now)
-    fishinginfo=next(rs)
+    fishinginfo=next(rs,None)
+
+    if fishinginfo is None:
+        #サンプルデータが実行日付に合わない場合のダミーデータ
+        fishinginfo="★サンプルデータ範囲外のためダミーデータを返送★ 最大数:115、最小数:1、最大長cm:87、最小長cm:8"
+        answer=f"{spotinfo}　本日の前後1か月の過去2年間の釣果情報は、{fishinginfo}"
     
+    else :
+        answer=f"{spotinfo}　本日の前後1か月の過去2年間の釣果情報は、{fishinginfo[0]}"
+
     #文字列を戻す
-    return f"{spotinfo}　本日の前後1か月の過去2年間の釣果情報は、{fishinginfo[0]}"
+    return answer
 
 
 

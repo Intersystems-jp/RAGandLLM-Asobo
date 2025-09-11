@@ -135,7 +135,14 @@ ClassMethod GetFishInfo(ByRef body As %DynamicArray) As %Status
         $$$ThrowOnError(stmt.%Prepare(sql2))
         set rset=stmt.%Execute(ts,ts)
         do rset.%Next()
-        set spotinfo=rset.DatetimeJst_" 釣り場："_rset.%Get("result")
+        set result=rset.%Get("result")
+        //サンプルデータ範囲外の場合の対応（潮位データは2026/9/9まで）
+        if result="" {
+            set spotinfo=rset.DatetimeJst_" ★サンプルデータ範囲外のためダミーデータを返送★ 釣り場：木更津沖堤防 下げ潮、若潮、潮位は28.5cm"  
+        }
+        else {
+            set spotinfo=rset.DatetimeJst_" 釣り場："_result
+        }
 
         // 過去の釣り情報（木更津沖堤防固定情報：SpotID='tb-001'）
         // 過去2年、指定日付の月前後1か月の釣り情報
@@ -147,8 +154,13 @@ ClassMethod GetFishInfo(ByRef body As %DynamicArray) As %Status
         do rset.%Next()
         set fishinginfo=rset.%Get("result")
         set body.FishInfo=$Get(spotinfo)
+
         if $GET(fishinginfo)'="" {
             set body.FishInfo=$Get(spotinfo)_"　本日の前後1か月の過去2年間の釣果情報は、"_$Get(fishinginfo)
+        }
+        else {
+            //サンプルデータ範囲外の場合ダミーをセット     
+            set body.FishInfo=$Get(spotinfo)_"　本日の前後1か月の過去2年間の釣果情報は、★サンプルデータ範囲外のためダミーデータを返送★ 最大数:115、最小数:1、最大長cm:87、最小長cm:8"
         }
     }
     catch ex {
